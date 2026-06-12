@@ -1028,46 +1028,98 @@ function renderPagesGrid() {
   });
 }
 
-// Generate PDF & Share
-document.getElementById('btn-export').addEventListener('click', async () => {
+// Helper to generate the jsPDF document object
+async function generatePDFDoc() {
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF('p', 'pt', 'a4');
+  
+  for (let i = 0; i < state.pages.length; i++) {
+    const page = state.pages[i];
+    const img = await loadImage(page.enhancedSrc);
+    
+    if (i > 0) {
+      doc.addPage();
+    }
+    
+    const iw = img.naturalWidth;
+    const ih = img.naturalHeight;
+    
+    const margin = 20;
+    const maxW = 595 - margin * 2;
+    const maxH = 842 - margin * 2;
+    
+    const scale = Math.min(maxW / iw, maxH / ih);
+    const w = iw * scale;
+    const h = ih * scale;
+    
+    const x = margin + (maxW - w) / 2;
+    const y = margin + (maxH - h) / 2;
+    
+    doc.addImage(page.enhancedSrc, 'JPEG', x, y, w, h);
+  }
+  return doc;
+}
+
+const exportSheet = document.getElementById('export-sheet');
+
+// Open Export menu bottom sheet
+document.getElementById('btn-export').addEventListener('click', () => {
   if (state.pages.length === 0) return;
   
-  showLoading('Generating PDF...');
+  // Check navigator.share capability dynamically
+  const shareBtn = document.getElementById('sheet-btn-share');
+  if (!navigator.share) {
+    shareBtn.classList.add('disabled');
+    shareBtn.disabled = true;
+    shareBtn.querySelector('.sheet-option-desc').textContent = "Not supported on this browser";
+  } else {
+    shareBtn.classList.remove('disabled');
+    shareBtn.disabled = false;
+    shareBtn.querySelector('.sheet-option-desc').textContent = "Send to WhatsApp, Email, or AirDrop";
+  }
+  
+  exportSheet.classList.add('active');
+});
+
+// Close Export menu
+function closeExportSheet() {
+  exportSheet.classList.remove('active');
+}
+
+document.getElementById('sheet-btn-cancel').addEventListener('click', closeExportSheet);
+exportSheet.addEventListener('click', (e) => {
+  if (e.target === exportSheet) {
+    closeExportSheet();
+  }
+});
+
+// Download PDF button handler
+document.getElementById('sheet-btn-download').addEventListener('click', async () => {
+  closeExportSheet();
+  showLoading('Generating PDF for download...');
   
   setTimeout(async () => {
     try {
-      const { jsPDF } = window.jspdf;
-      const doc = new jsPDF('p', 'pt', 'a4');
-      
-      for (let i = 0; i < state.pages.length; i++) {
-        const page = state.pages[i];
-        const img = await loadImage(page.enhancedSrc);
-        
-        if (i > 0) {
-          doc.addPage();
-        }
-        
-        const iw = img.naturalWidth;
-        const ih = img.naturalHeight;
-        
-        const margin = 20;
-        const maxW = 595 - margin * 2;
-        const maxH = 842 - margin * 2;
-        
-        const scale = Math.min(maxW / iw, maxH / ih);
-        const w = iw * scale;
-        const h = ih * scale;
-        
-        const x = margin + (maxW - w) / 2;
-        const y = margin + (maxH - h) / 2;
-        
-        doc.addImage(page.enhancedSrc, 'JPEG', x, y, w, h);
-      }
-      
+      const doc = await generatePDFDoc();
+      doc.save('Scanned_Document.pdf');
+    } catch(err) {
+      alert('Failed to generate PDF: ' + err.message);
+    } finally {
+      hideLoading();
+    }
+  }, 100);
+});
+
+// Share PDF button handler
+document.getElementById('sheet-btn-share').addEventListener('click', async () => {
+  closeExportSheet();
+  showLoading('Generating PDF for share...');
+  
+  setTimeout(async () => {
+    try {
+      const doc = await generatePDFDoc();
       const pdfBlob = doc.output('blob');
       const file = new File([pdfBlob], "Scanned_Document.pdf", { type: "application/pdf" });
-      
-      hideLoading();
       
       if (navigator.canShare && navigator.canShare({ files: [file] })) {
         await navigator.share({
@@ -1076,11 +1128,12 @@ document.getElementById('btn-export').addEventListener('click', async () => {
           text: 'Here is your compiled scanned document.'
         });
       } else {
-        doc.save('Scanned_Document.pdf');
+        alert("Sharing is not supported for PDF files on this browser. Please use the 'Save to Device' option.");
       }
     } catch(err) {
+      alert('Failed to share PDF: ' + err.message);
+    } finally {
       hideLoading();
-      alert('Failed to generate/share PDF: ' + err.message);
     }
   }, 100);
 });

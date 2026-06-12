@@ -51,7 +51,7 @@
         </label>
         
         <button id="btn-export" class="action-btn disabled" disabled>
-          <span class="btn-icon pdf-icon"></span> Share PDF
+          <span class="btn-icon pdf-icon"></span> Export PDF
         </button>
       </div>
     </section>
@@ -111,6 +111,34 @@
       <div class="glass-loader">
         <div class="spinner"></div>
         <p id="loading-text">Processing image...</p>
+      </div>
+    </div>
+
+    <!-- Export Bottom Sheet -->
+    <div id="export-sheet" class="sheet-overlay">
+      <div class="bottom-sheet">
+        <div class="sheet-header">
+          <div class="sheet-handle"></div>
+          <h3>Export Document</h3>
+        </div>
+        <div class="sheet-options">
+          <button id="sheet-btn-download" class="sheet-option-btn">
+            <div class="sheet-option-icon download">📥</div>
+            <div class="sheet-option-info">
+              <span class="sheet-option-title">Save to Device</span>
+              <span class="sheet-option-desc">Download PDF directly to your storage</span>
+            </div>
+          </button>
+          
+          <button id="sheet-btn-share" class="sheet-option-btn">
+            <div class="sheet-option-icon">📤</div>
+            <div class="sheet-option-info">
+              <span class="sheet-option-title">Share with Apps</span>
+              <span class="sheet-option-desc">Send to WhatsApp, Email, or AirDrop</span>
+            </div>
+          </button>
+        </div>
+        <button id="sheet-btn-cancel" class="sheet-cancel-btn">Cancel</button>
       </div>
     </div>
     
