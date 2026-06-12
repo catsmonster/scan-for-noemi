@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Premium Document Scanner</title>
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#8b5cf6">
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+  
+  <!-- jsPDF local dependency, fallbacks to CDN if download failed -->
+  <script src="jspdf.umd.min.js" onerror="this.onerror=null; this.src='https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js';"></script>
+</head>
+<body>
+  
+  <!-- Main Container -->
+  <div id="app">
+    
+    <!-- View 1: Gallery / Dashboard -->
+    <section id="view-gallery" class="view active">
+      <header class="app-header">
+        <div class="logo-area">
+          <div class="logo-icon"></div>
+          <h1>DocScanner<span>Pro</span></h1>
+        </div>
+        <p class="subtitle">Secure, local-only document scanning</p>
+      </header>
+
+      <div class="pages-container">
+        <div id="empty-state" class="empty-state">
+          <div class="empty-icon"></div>
+          <h3>No Scanned Pages Yet</h3>
+          <p>Scan documents using your camera or import existing images to start.</p>
+        </div>
+        <div id="pages-grid" class="pages-grid"></div>
+      </div>
+
+      <div class="bottom-bar">
+        <label class="action-btn secondary">
+          <input type="file" id="btn-import" accept="image/*" multiple style="display: none;">
+          <span class="btn-icon import-icon"></span> Import
+        </label>
+        
+        <label class="action-btn primary capture-btn">
+          <input type="file" id="btn-capture" accept="image/*" capture="environment" style="display: none;">
+          <span class="btn-icon camera-icon"></span> Scan Page
+        </label>
+        
+        <button id="btn-export" class="action-btn disabled" disabled>
+          <span class="btn-icon pdf-icon"></span> Share PDF
+        </button>
+      </div>
+    </section>
+
+    <!-- View 2: Interactive Crop Editor -->
+    <section id="view-crop" class="view">
+      <header class="editor-header">
+        <button id="btn-crop-cancel" class="header-btn">Cancel</button>
+        <h2>Adjust Borders</h2>
+        <button id="btn-crop-rotate" class="header-btn circle-btn"><span class="rotate-icon"></span></button>
+      </header>
+
+      <div class="crop-canvas-wrapper">
+        <canvas id="crop-canvas"></canvas>
+      </div>
+
+      <div class="editor-footer">
+        <p class="instruction-text">Drag corners to match document boundaries</p>
+        <button id="btn-crop-apply" class="action-btn primary full-width">Crop & Flatten</button>
+      </div>
+    </section>
+
+    <!-- View 3: Preview & Enhance Page -->
+    <section id="view-enhance" class="view">
+      <header class="editor-header">
+        <button id="btn-enhance-back" class="header-btn">Recrop</button>
+        <h2>Enhance Quality</h2>
+        <div style="width: 60px;"></div> <!-- Spacer -->
+      </header>
+
+      <div class="preview-container">
+        <img id="enhance-preview" alt="Enhanced Preview">
+      </div>
+
+      <div class="enhance-controls">
+        <div class="control-tabs">
+          <button id="tab-scan" class="tab-btn active">Scan Mode</button>
+          <button id="tab-photo" class="tab-btn">Photo Mode</button>
+        </div>
+        
+        <div class="slider-control" id="brightness-control">
+          <label for="slider-brightness">Brighten Level</label>
+          <div class="slider-row">
+            <input type="range" id="slider-brightness" min="160" max="240" value="220">
+            <span id="label-brightness">220</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="editor-footer">
+        <button id="btn-enhance-save" class="action-btn primary full-width">Apply & Save</button>
+      </div>
+    </section>
+
+    <!-- Global Loading Overlay -->
+    <div id="loading-overlay" class="loading-overlay">
+      <div class="glass-loader">
+        <div class="spinner"></div>
+        <p id="loading-text">Processing image...</p>
+      </div>
+    </div>
+    
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

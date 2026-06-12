@@ -1,0 +1,21 @@
+{
+  "name": "Premium Document Scanner",
+  "short_name": "DocScanner",
+  "start_url": "index.html",
+  "display": "standalone",
+  "background_color": "#0f0f11",
+  "theme_color": "#8b5cf6",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "icon-192.png",
+      "type": "image/png",
+      "sizes": "192x192"
+    },
+    {
+      "src": "icon-512.png",
+      "type": "image/png",
+      "sizes": "512x512"
+    }
+  ]
+}
