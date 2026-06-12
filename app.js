@@ -252,45 +252,52 @@ function autoDetectPaperCorners(img) {
   const tw = tempCanvas.width;
   const th = tempCanvas.height;
   
-  // 1. Compute brightness grid and 256-bin histogram
+  // 1. Compute brightness grid
   const totalPixels = tw * th;
   const brightnessGrid = new Uint8Array(totalPixels);
-  const histogram = new Int32Array(256);
   for (let idx = 0; idx < totalPixels; idx++) {
     const pxIdx = idx * 4;
-    const b = Math.round((pixels[pxIdx] + pixels[pxIdx + 1] + pixels[pxIdx + 2]) / 3);
-    brightnessGrid[idx] = b;
-    histogram[b]++;
+    brightnessGrid[idx] = Math.round((pixels[pxIdx] + pixels[pxIdx + 1] + pixels[pxIdx + 2]) / 3);
   }
 
-  // 2. Compute dynamic Otsu threshold
-  let sum = 0;
-  for (let i = 0; i < 256; i++) {
-    sum += i * histogram[i];
-  }
-  let sumB = 0, wB = 0, wF = 0, varMax = 0, threshold = 40;
-  for (let t = 0; t < 256; t++) {
-    wB += histogram[t];
-    if (wB === 0) continue;
-    wF = totalPixels - wB;
-    if (wF === 0) break;
-    sumB += t * histogram[t];
-    const mB = sumB / wB;
-    const mF = (sum - sumB) / wF;
-    const varBetween = wB * wF * (mB - mF) * (mB - mF);
-    if (varBetween > varMax) {
-      varMax = varBetween;
-      threshold = t;
+  // 2. Compute Integral Image for fast local mean thresholding
+  const integral = new Int32Array(totalPixels);
+  for (let y = 0; y < th; y++) {
+    let rowSum = 0;
+    for (let x = 0; x < tw; x++) {
+      const idx = y * tw + x;
+      rowSum += brightnessGrid[idx];
+      integral[idx] = rowSum + (y > 0 ? integral[idx - tw] : 0);
     }
   }
-  
-  // Clamp threshold between 35 and 110 for safety
-  threshold = Math.min(110, Math.max(35, threshold));
 
-  // 3. Create binary grid using the dynamic threshold
+  // 3. Local Adaptive Thresholding (with 15% window size and 35 absolute floor)
+  const winSize = Math.round(Math.max(tw, th) * 0.15);
+  const r = Math.round(winSize / 2);
   const binaryGrid = new Uint8Array(totalPixels);
-  for (let i = 0; i < totalPixels; i++) {
-    binaryGrid[i] = brightnessGrid[i] > threshold ? 1 : 0;
+  
+  for (let y = 0; y < th; y++) {
+    const y0 = Math.max(0, y - r);
+    const y1 = Math.min(th - 1, y + r);
+    for (let x = 0; x < tw; x++) {
+      const x0 = Math.max(0, x - r);
+      const x1 = Math.min(tw - 1, x + r);
+      
+      const count = (y1 - y0 + 1) * (x1 - x0 + 1);
+      
+      const i00 = (y0 > 0 && x0 > 0) ? integral[(y0 - 1) * tw + (x0 - 1)] : 0;
+      const i01 = (y0 > 0) ? integral[(y0 - 1) * tw + x1] : 0;
+      const i10 = (x0 > 0) ? integral[y1 * tw + (x0 - 1)] : 0;
+      const i11 = integral[y1 * tw + x1];
+      
+      const sum = i11 - i01 - i10 + i00;
+      const localAverage = sum / count;
+      
+      const idx = y * tw + x;
+      const val = brightnessGrid[idx];
+      // Adaptive mean - 12, with an absolute floor threshold of 35 to reject dark borders/tables
+      binaryGrid[idx] = (val > (localAverage - 12) && val > 35) ? 1 : 0;
+    }
   }
 
   // 4. BFS to find the largest connected component of foreground pixels
@@ -300,8 +307,8 @@ function autoDetectPaperCorners(img) {
   // Flat BFS queue to prevent stack size exceeded or dynamic allocations
   const queue = new Int32Array(totalPixels);
   
-  for (let y = 1; y < th - 1; y++) {
-    for (let x = 1; x < tw - 1; x++) {
+  for (let y = 0; y < th; y++) {
+    for (let x = 0; x < tw; x++) {
       const idx = y * tw + x;
       if (binaryGrid[idx] === 1 && visited[idx] === 0) {
         let qHead = 0;
@@ -402,15 +409,20 @@ function autoDetectPaperCorners(img) {
     { x: ptBL.x / scale, y: ptBL.y / scale }
   ];
 
-  // Apply safety padding inwards (1.5%) to trim black edges
   const cx = (corners[0].x + corners[1].x + corners[2].x + corners[3].x) / 4;
   const cy = (corners[0].y + corners[1].y + corners[2].y + corners[3].y) / 4;
 
-  const shrinkFactor = 0.985; // 1.5% inward shrink
-  return corners.map(pt => ({
-    x: Math.min(w, Math.max(0, cx + (pt.x - cx) * shrinkFactor)),
-    y: Math.min(h, Math.max(0, cy + (pt.y - cy) * shrinkFactor))
-  }));
+  return corners.map(pt => {
+    const dx = pt.x - cx;
+    const dy = pt.y - cy;
+    const dist = Math.hypot(dx, dy) || 1;
+    const pad = Math.max(25, dist * 0.015);
+    const ratio = Math.max(0, 1 - pad / dist);
+    return {
+      x: Math.min(w, Math.max(0, cx + dx * ratio)),
+      y: Math.min(h, Math.max(0, cy + dy * ratio))
+    };
+  });
 }
 
 // --- Corner Handling & Cropping Interface ---
