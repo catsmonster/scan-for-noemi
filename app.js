@@ -252,61 +252,115 @@ function autoDetectPaperCorners(img) {
   const tw = tempCanvas.width;
   const th = tempCanvas.height;
   
-  // Calculate brightness for all pixels to apply density filter
-  const brightnessGrid = new Uint8Array(tw * th);
-  for (let y = 0; y < th; y++) {
-    for (let x = 0; x < tw; x++) {
-      const idx = (y * tw + x) * 4;
-      brightnessGrid[y * tw + x] = (pixels[idx] + pixels[idx + 1] + pixels[idx + 2]) / 3;
-    }
+  // 1. Compute brightness grid and 256-bin histogram
+  const totalPixels = tw * th;
+  const brightnessGrid = new Uint8Array(totalPixels);
+  const histogram = new Int32Array(256);
+  for (let idx = 0; idx < totalPixels; idx++) {
+    const pxIdx = idx * 4;
+    const b = Math.round((pixels[pxIdx] + pixels[pxIdx + 1] + pixels[pxIdx + 2]) / 3);
+    brightnessGrid[idx] = b;
+    histogram[b]++;
   }
 
-  // Find extrema points for:
-  // TL: minimizes x + y
-  // TR: maximizes x - y
-  // BR: maximizes x + y
-  // BL: minimizes x - y
-  let minTL = Infinity, maxTR = -Infinity, maxBR = -Infinity, minBL = Infinity;
-  let ptTL = { x: 0, y: 0 };
-  let ptTR = { x: tw, y: 0 };
-  let ptBR = { x: tw, y: th };
-  let ptBL = { x: 0, y: th };
-  let found = false;
+  // 2. Compute dynamic Otsu threshold
+  let sum = 0;
+  for (let i = 0; i < 256; i++) {
+    sum += i * histogram[i];
+  }
+  let sumB = 0, wB = 0, wF = 0, varMax = 0, threshold = 40;
+  for (let t = 0; t < 256; t++) {
+    wB += histogram[t];
+    if (wB === 0) continue;
+    wF = totalPixels - wB;
+    if (wF === 0) break;
+    sumB += t * histogram[t];
+    const mB = sumB / wB;
+    const mF = (sum - sumB) / wF;
+    const varBetween = wB * wF * (mB - mF) * (mB - mF);
+    if (varBetween > varMax) {
+      varMax = varBetween;
+      threshold = t;
+    }
+  }
+  
+  // Clamp threshold between 35 and 110 for safety
+  threshold = Math.min(110, Math.max(35, threshold));
 
+  // 3. Create binary grid using the dynamic threshold
+  const binaryGrid = new Uint8Array(totalPixels);
+  for (let i = 0; i < totalPixels; i++) {
+    binaryGrid[i] = brightnessGrid[i] > threshold ? 1 : 0;
+  }
+
+  // 4. BFS to find the largest connected component of foreground pixels
+  const visited = new Uint8Array(totalPixels);
+  let largestComponent = [];
+  
+  // Flat BFS queue to prevent stack size exceeded or dynamic allocations
+  const queue = new Int32Array(totalPixels);
+  
   for (let y = 1; y < th - 1; y++) {
     for (let x = 1; x < tw - 1; x++) {
-      const b = brightnessGrid[y * tw + x];
-      
-      // Black background threshold (brightness > 40)
-      if (b > 40) {
-        // Simple 3x3 local density filter to reject single-pixel noise
-        let neighborCount = 0;
-        for (let dy = -1; dy <= 1; dy++) {
-          for (let dx = -1; dx <= 1; dx++) {
-            if (brightnessGrid[(y + dy) * tw + (x + dx)] > 40) {
-              neighborCount++;
+      const idx = y * tw + x;
+      if (binaryGrid[idx] === 1 && visited[idx] === 0) {
+        let qHead = 0;
+        let qTail = 0;
+        queue[qTail++] = idx;
+        visited[idx] = 1;
+        
+        while (qHead < qTail) {
+          const currIdx = queue[qHead++];
+          const cx = currIdx % tw;
+          const cy = Math.floor(currIdx / tw);
+          
+          // Left
+          if (cx > 0) {
+            const nIdx = currIdx - 1;
+            if (binaryGrid[nIdx] === 1 && visited[nIdx] === 0) {
+              visited[nIdx] = 1;
+              queue[qTail++] = nIdx;
+            }
+          }
+          // Right
+          if (cx < tw - 1) {
+            const nIdx = currIdx + 1;
+            if (binaryGrid[nIdx] === 1 && visited[nIdx] === 0) {
+              visited[nIdx] = 1;
+              queue[qTail++] = nIdx;
+            }
+          }
+          // Up
+          if (cy > 0) {
+            const nIdx = currIdx - tw;
+            if (binaryGrid[nIdx] === 1 && visited[nIdx] === 0) {
+              visited[nIdx] = 1;
+              queue[qTail++] = nIdx;
+            }
+          }
+          // Down
+          if (cy < th - 1) {
+            const nIdx = currIdx + tw;
+            if (binaryGrid[nIdx] === 1 && visited[nIdx] === 0) {
+              visited[nIdx] = 1;
+              queue[qTail++] = nIdx;
             }
           }
         }
         
-        if (neighborCount >= 5) {
-          found = true;
-          const valTL = x + y;
-          const valTR = x - y;
-          const valBR = x + y;
-          const valBL = x - y;
-
-          if (valTL < minTL) { minTL = valTL; ptTL = { x, y }; }
-          if (valTR > maxTR) { maxTR = valTR; ptTR = { x, y }; }
-          if (valBR > maxBR) { maxBR = valBR; ptBR = { x, y }; }
-          if (valBL < minBL) { minBL = valBL; ptBL = { x, y }; }
+        if (qTail > largestComponent.length) {
+          largestComponent = new Int32Array(qTail);
+          for (let i = 0; i < qTail; i++) {
+            largestComponent[i] = queue[i];
+          }
         }
       }
     }
   }
 
-  // If no paper boundary found, fallback to default 5% margins
-  if (!found) {
+  // Fallback to default 5% margins if no component found or if the component is tiny
+  const minArea = totalPixels * 0.015; 
+  if (largestComponent.length < minArea) {
     const borderX = w * 0.05;
     const borderY = h * 0.05;
     return [
@@ -317,6 +371,29 @@ function autoDetectPaperCorners(img) {
     ];
   }
 
+  // 5. Find the 4 corners from the largest component using projection extrema
+  let minTL = Infinity, maxTR = -Infinity, maxBR = -Infinity, minBL = Infinity;
+  let ptTL = { x: 0, y: 0 };
+  let ptTR = { x: tw, y: 0 };
+  let ptBR = { x: tw, y: th };
+  let ptBL = { x: 0, y: th };
+
+  for (let i = 0; i < largestComponent.length; i++) {
+    const idx = largestComponent[i];
+    const x = idx % tw;
+    const y = Math.floor(idx / tw);
+
+    const valTL = x + y;
+    const valTR = x - y;
+    const valBR = x + y;
+    const valBL = x - y;
+
+    if (valTL < minTL) { minTL = valTL; ptTL = { x, y }; }
+    if (valTR > maxTR) { maxTR = valTR; ptTR = { x, y }; }
+    if (valBR > maxBR) { maxBR = valBR; ptBR = { x, y }; }
+    if (valBL < minBL) { minBL = valBL; ptBL = { x, y }; }
+  }
+
   // Scale back to original resolution coordinates
   const corners = [
     { x: ptTL.x / scale, y: ptTL.y / scale },
@@ -325,8 +402,7 @@ function autoDetectPaperCorners(img) {
     { x: ptBL.x / scale, y: ptBL.y / scale }
   ];
 
-  // Apply safety padding inwards (1.5%) to trim black scanner edges
-  // Calculate centroid of the 4 corners
+  // Apply safety padding inwards (1.5%) to trim black edges
   const cx = (corners[0].x + corners[1].x + corners[2].x + corners[3].x) / 4;
   const cy = (corners[0].y + corners[1].y + corners[2].y + corners[3].y) / 4;
 
