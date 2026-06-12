@@ -119,18 +119,17 @@ function bilinearWarp(srcImg, corners, destWidth, destHeight) {
   return destCanvas.toDataURL('image/jpeg', 0.95);
 }
 
-// Flat-Field Illumination Correction & Levels Adjust
 function flatfieldEnhance(img, whitePoint, blackPoint) {
   const canvas = document.createElement('canvas');
-  canvas.width = img.naturalWidth;
-  canvas.height = img.naturalHeight;
+  const w = img.naturalWidth || img.width;
+  const h = img.naturalHeight || img.height;
+  canvas.width = w;
+  canvas.height = h;
   const ctx = canvas.getContext('2d');
   ctx.drawImage(img, 0, 0);
 
   const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
   const pixels = imgData.data;
-  const w = canvas.width;
-  const h = canvas.height;
 
   // Grid background estimation (16x16 blocks)
   const cols = 16;
@@ -253,28 +252,61 @@ function autoDetectPaperCorners(img) {
   const tw = tempCanvas.width;
   const th = tempCanvas.height;
   
-  let minX = tw, maxX = 0, minY = th, maxY = 0;
-  
+  // Calculate brightness for all pixels to apply density filter
+  const brightnessGrid = new Uint8Array(tw * th);
   for (let y = 0; y < th; y++) {
     for (let x = 0; x < tw; x++) {
       const idx = (y * tw + x) * 4;
-      const r = pixels[idx];
-      const g = pixels[idx+1];
-      const b = pixels[idx+2];
-      const brightness = (r + g + b) / 3;
+      brightnessGrid[y * tw + x] = (pixels[idx] + pixels[idx + 1] + pixels[idx + 2]) / 3;
+    }
+  }
+
+  // Find extrema points for:
+  // TL: minimizes x + y
+  // TR: maximizes x - y
+  // BR: maximizes x + y
+  // BL: minimizes x - y
+  let minTL = Infinity, maxTR = -Infinity, maxBR = -Infinity, minBL = Infinity;
+  let ptTL = { x: 0, y: 0 };
+  let ptTR = { x: tw, y: 0 };
+  let ptBR = { x: tw, y: th };
+  let ptBL = { x: 0, y: th };
+  let found = false;
+
+  for (let y = 1; y < th - 1; y++) {
+    for (let x = 1; x < tw - 1; x++) {
+      const b = brightnessGrid[y * tw + x];
       
-      // Black background threshold
-      if (brightness > 40) {
-        if (x < minX) minX = x;
-        if (x > maxX) maxX = x;
-        if (y < minY) minY = y;
-        if (y > maxY) maxY = y;
+      // Black background threshold (brightness > 40)
+      if (b > 40) {
+        // Simple 3x3 local density filter to reject single-pixel noise
+        let neighborCount = 0;
+        for (let dy = -1; dy <= 1; dy++) {
+          for (let dx = -1; dx <= 1; dx++) {
+            if (brightnessGrid[(y + dy) * tw + (x + dx)] > 40) {
+              neighborCount++;
+            }
+          }
+        }
+        
+        if (neighborCount >= 5) {
+          found = true;
+          const valTL = x + y;
+          const valTR = x - y;
+          const valBR = x + y;
+          const valBL = x - y;
+
+          if (valTL < minTL) { minTL = valTL; ptTL = { x, y }; }
+          if (valTR > maxTR) { maxTR = valTR; ptTR = { x, y }; }
+          if (valBR > maxBR) { maxBR = valBR; ptBR = { x, y }; }
+          if (valBL < minBL) { minBL = valBL; ptBL = { x, y }; }
+        }
       }
     }
   }
-  
+
   // If no paper boundary found, fallback to default 5% margins
-  if (maxX <= minX || maxY <= minY) {
+  if (!found) {
     const borderX = w * 0.05;
     const borderY = h * 0.05;
     return [
@@ -284,28 +316,25 @@ function autoDetectPaperCorners(img) {
       { x: borderX, y: h - borderY }
     ];
   }
-  
+
   // Scale back to original resolution coordinates
-  const fx = minX / scale;
-  const fy = minY / scale;
-  const fw = (maxX - minX) / scale;
-  const fh = (maxY - minY) / scale;
-  
-  // Apply safety padding inwards (1.5%) to trim black scanner edges
-  const padX = fw * 0.015;
-  const padY = fh * 0.015;
-  
-  const x_start = Math.max(0, fx + padX);
-  const y_start = Math.max(0, fy + padY);
-  const x_end = Math.min(w, fx + fw - padX);
-  const y_end = Math.min(h, fy + fh - padY);
-  
-  return [
-    { x: x_start, y: y_start }, // TL
-    { x: x_end, y: y_start },   // TR
-    { x: x_end, y: y_end },     // BR
-    { x: x_start, y: y_end }    // BL
+  const corners = [
+    { x: ptTL.x / scale, y: ptTL.y / scale },
+    { x: ptTR.x / scale, y: ptTR.y / scale },
+    { x: ptBR.x / scale, y: ptBR.y / scale },
+    { x: ptBL.x / scale, y: ptBL.y / scale }
   ];
+
+  // Apply safety padding inwards (1.5%) to trim black scanner edges
+  // Calculate centroid of the 4 corners
+  const cx = (corners[0].x + corners[1].x + corners[2].x + corners[3].x) / 4;
+  const cy = (corners[0].y + corners[1].y + corners[2].y + corners[3].y) / 4;
+
+  const shrinkFactor = 0.985; // 1.5% inward shrink
+  return corners.map(pt => ({
+    x: Math.min(w, Math.max(0, cx + (pt.x - cx) * shrinkFactor)),
+    y: Math.min(h, Math.max(0, cy + (pt.y - cy) * shrinkFactor))
+  }));
 }
 
 // --- Corner Handling & Cropping Interface ---
@@ -548,13 +577,29 @@ document.getElementById('btn-crop-apply').addEventListener('click', () => {
 // --- Enhance Preview Screen ---
 
 let enhanceEditorState = {
-  img: null
+  img: null,
+  previewCanvas: null
 };
 
 function initEnhanceEditor(croppedSrc) {
   showLoading('Preparing enhance editor...');
   loadImage(croppedSrc).then(img => {
     enhanceEditorState.img = img;
+    
+    // Create downscaled preview canvas (max 800px)
+    const maxDim = 800;
+    const w = img.naturalWidth;
+    const h = img.naturalHeight;
+    const scale = Math.min(maxDim / w, maxDim / h, 1.0);
+    
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.round(w * scale);
+    canvas.height = Math.round(h * scale);
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    
+    enhanceEditorState.previewCanvas = canvas;
+    
     const page = state.pages[state.currentPageIndex];
     
     const tabScan = document.getElementById('tab-scan');
@@ -575,7 +620,8 @@ function initEnhanceEditor(croppedSrc) {
     sliderBrightness.value = page.brightness;
     labelBrightness.textContent = page.brightness;
     
-    applyEnhanceSettings();
+    applyEnhanceSettings(true);
+    hideLoading();
     switchView('enhance');
   }).catch(err => {
     hideLoading();
@@ -583,33 +629,70 @@ function initEnhanceEditor(croppedSrc) {
   });
 }
 
-function applyEnhanceSettings() {
-  showLoading('Enhancing image...');
-  setTimeout(() => {
+function applyEnhanceSettings(isPreview = true) {
+  if (isPreview) {
     const page = state.pages[state.currentPageIndex];
-    const img = enhanceEditorState.img;
+    const canvas = enhanceEditorState.previewCanvas;
+    if (!canvas) return;
     
     if (page.mode === 'scan') {
-      const enhancedSrc = flatfieldEnhance(img, page.brightness, 15);
-      page.enhancedSrc = enhancedSrc;
+      const enhancedSrc = flatfieldEnhance(canvas, page.brightness, 15);
       enhancePreview.src = enhancedSrc;
     } else {
-      page.enhancedSrc = page.croppedSrc;
       enhancePreview.src = page.croppedSrc;
     }
-    hideLoading();
-  }, 50);
+  } else {
+    showLoading('Applying final enhancements...');
+    setTimeout(() => {
+      try {
+        const page = state.pages[state.currentPageIndex];
+        const img = enhanceEditorState.img;
+        
+        if (page.mode === 'scan') {
+          const enhancedSrc = flatfieldEnhance(img, page.brightness, 15);
+          page.enhancedSrc = enhancedSrc;
+        } else {
+          page.enhancedSrc = page.croppedSrc;
+        }
+        
+        hideLoading();
+        switchView('gallery');
+        renderPagesGrid();
+      } catch(err) {
+        hideLoading();
+        alert('Error saving enhancements: ' + err.message);
+      }
+    }, 50);
+  }
 }
 
 const sliderBrightness = document.getElementById('slider-brightness');
+let isEnhancingPreview = false;
+let pendingEnhanceUpdate = false;
+
+function requestPreviewEnhance() {
+  if (isEnhancingPreview) {
+    pendingEnhanceUpdate = true;
+    return;
+  }
+  
+  isEnhancingPreview = true;
+  pendingEnhanceUpdate = false;
+  
+  requestAnimationFrame(() => {
+    applyEnhanceSettings(true);
+    isEnhancingPreview = false;
+    if (pendingEnhanceUpdate) {
+      requestPreviewEnhance();
+    }
+  });
+}
+
 sliderBrightness.addEventListener('input', (e) => {
   document.getElementById('label-brightness').textContent = e.target.value;
-});
-
-sliderBrightness.addEventListener('change', (e) => {
   const page = state.pages[state.currentPageIndex];
   page.brightness = parseInt(e.target.value);
-  applyEnhanceSettings();
+  requestPreviewEnhance();
 });
 
 document.getElementById('tab-scan').addEventListener('click', () => {
@@ -619,7 +702,7 @@ document.getElementById('tab-scan').addEventListener('click', () => {
   document.getElementById('tab-scan').classList.add('active');
   document.getElementById('tab-photo').classList.remove('active');
   document.getElementById('brightness-control').style.display = 'flex';
-  applyEnhanceSettings();
+  applyEnhanceSettings(true);
 });
 
 document.getElementById('tab-photo').addEventListener('click', () => {
@@ -629,7 +712,7 @@ document.getElementById('tab-photo').addEventListener('click', () => {
   document.getElementById('tab-photo').classList.add('active');
   document.getElementById('tab-scan').classList.remove('active');
   document.getElementById('brightness-control').style.display = 'none';
-  applyEnhanceSettings();
+  applyEnhanceSettings(true);
 });
 
 document.getElementById('btn-enhance-back').addEventListener('click', () => {
@@ -638,8 +721,7 @@ document.getElementById('btn-enhance-back').addEventListener('click', () => {
 });
 
 document.getElementById('btn-enhance-save').addEventListener('click', () => {
-  switchView('gallery');
-  renderPagesGrid();
+  applyEnhanceSettings(false);
 });
 
 // --- Gallery / Main Dashboard Logic ---
